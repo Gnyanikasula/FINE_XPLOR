@@ -30,16 +30,17 @@ from torch.utils.data import DataLoader
 train_loader = DataLoader(tokenized_dataset, batch_size=8, shuffle=True)
 
 # Model setup with quantization
-quantization_config = BitsAndBytesConfig(
-    load_in_8bit=True,
-    llm_int8_threshold=6.0,
-    llm_int8_has_fp16_weight=True
+bnb_config = BitsAndBytesConfig(
+    load_in_8bit=True,  # Set to True for 8-bit quantization
+    llm_int8_threshold=6.0,  # Threshold for outlier detection
+    llm_int8_skip_modules=["lm_head"],  # Skip quantizing output layers if needed
 )
 
+# Load the model with quantization config
 model = AutoModelForCausalLM.from_pretrained(
     "mistralai/Mistral-7B-v0.3",
-    quantization_config=quantization_config,
-    device_map="auto"
+    quantization_config=bnb_config,
+    device_map="auto"  # Automatically map model layers to available GPUs
 )
 
 # LoRA configuration and application

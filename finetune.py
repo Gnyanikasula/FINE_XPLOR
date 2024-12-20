@@ -37,7 +37,7 @@ model = FastLanguageModel.get_peft_model(
     lora_dropout=0.1
 )
 
-dataset = load_dataset("gnyani007/FIN_JSON", split="train")
+dataset = load_dataset("gnyani007/FIN2_JSON", split="train")
 
 def flatten_dataset(data):
     flattened_data = []
@@ -168,5 +168,16 @@ trainer = Trainer(
 )
 
 trainer.train()
+output2_dir = ""
+model.save_pretrained(output2_dir)
+tokenizer.save_pretrained(output2_dir)
+
+repo_id = "gnyani007/FIN"
+
+# Push model and tokenizer
+model.push_to_hub(repo_id)
+tokenizer.push_to_hub(repo_id)
+
+print(f"Model successfully pushed to Hugging Face Hub at: https://huggingface.co/{repo_id}")
 
 

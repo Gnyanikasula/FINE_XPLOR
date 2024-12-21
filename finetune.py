@@ -47,16 +47,16 @@ def tokenize_function(examples):
     targets = [f"{a}" for a in examples['answer']]
     
     # Debug: Print the first few inputs and targets
-    print("Inputs:", inputs[:3])  # Adjust the number to inspect more samples
-    print("Targets:", targets[:3])
+    # print("Inputs:", inputs[:3])  # Adjust the number to inspect more samples
+    # print("Targets:", targets[:3])
     
     # Tokenize inputs and targets
     model_inputs = tokenizer(inputs, max_length=512, padding="max_length", truncation=True)
     labels = tokenizer(targets, max_length=512, padding="max_length", truncation=True)["input_ids"]
     
     # Debug: Print tokenized inputs and labels for the first few samples
-    print("Tokenized Inputs:", model_inputs['input_ids'][:3])
-    print("Tokenized Labels:", labels[:3])
+    # print("Tokenized Inputs:", model_inputs['input_ids'][:3])
+    # print("Tokenized Labels:", labels[:3])
     
     model_inputs["labels"] = labels
     return model_inputs
@@ -69,7 +69,7 @@ tokenized_dataset = dataset.map(
 )
 
 # Debug: Print structure of the tokenized dataset
-print("Tokenized Dataset Example:", tokenized_dataset[0])
+# print("Tokenized Dataset Example:", tokenized_dataset[0])
 
 
 

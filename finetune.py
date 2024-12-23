@@ -52,7 +52,7 @@ val_dataset = train_test_split["test"]
 
 # Tokenization Function
 def tokenize_function(examples):
-    inputs = [f"Question: {q} Context: Provide a precise answer.\nAnswer:" for q in examples["question"]]
+    inputs = [f"Context: Provide a precise answer for the financial related question, Question: {q} .\nAnswer:" for q in examples["question"]]
     targets = [a for a in examples["answer"]]
     model_inputs = tokenizer(inputs, max_length=512, padding="max_length", truncation=True)
     labels = tokenizer(targets, max_length=512, padding="max_length", truncation=True)["input_ids"]

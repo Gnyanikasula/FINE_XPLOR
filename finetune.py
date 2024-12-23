@@ -2,10 +2,13 @@ import torch
 import json
 import numpy as np
 from datasets import load_dataset
-from datasets import Dataset as HFDataset
-from torch.utils.data import DataLoader
-from transformers import BitsAndBytesConfig, TrainingArguments, Trainer
-from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig, TrainingArguments, Trainer
+from transformers import (
+    AutoTokenizer,
+    TrainingArguments,
+    Trainer,
+    AutoModelForCausalLM,
+    BitsAndBytesConfig,
+)
 from huggingface_hub import login
 from unsloth import FastLanguageModel
 
@@ -15,99 +18,94 @@ login(token)
 model_name = "mistralai/Mistral-7B-v0.3"
 
 
-# Model setup with quantization
+# Model and Quantization Configuration
+model_name = "mistralai/Mistral-7B-v0.3"
 bnb_config = BitsAndBytesConfig(
-    load_in_8bit=True,  # Set to True for 8-bit quantization
-    llm_int8_threshold=6.0,  # Threshold for outlier detection
-    llm_int8_skip_modules=["lm_head"],  # Skip quantizing output layers if needed
+    load_in_8bit=True,
+    llm_int8_threshold=6.0,
+    llm_int8_skip_modules=["lm_head"],
 )
 
 model, tokenizer = FastLanguageModel.from_pretrained(
     model_name=model_name,
-    max_seq_length=512,        # Adjust sequence length based on your data
-              # Enable 4-bit quantization
+    max_seq_length=512,
     quantization_config=bnb_config,
-    device_map="auto",          # Automatically map model layers to available GPUs
+    device_map="auto",
+      # Enables fast downloading
 )
 
+
+# Apply LoRA Configuration
 model = FastLanguageModel.get_peft_model(
     model,
-    r=16,                       # Rank of LoRA adapters
-    target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],  # Target specific layers
-    lora_alpha=32,
-    lora_dropout=0.1
+    r=8,                        # Reduced rank for small datasets
+    target_modules=["q_proj", "v_proj"],  # Focus on key layers for adaptation
+    lora_alpha=64,              # Stronger updates
+    lora_dropout=0.2,           # Reduce overfitting
 )
 
-dataset = load_dataset('gnyani007/data5000', split='train')
+# Load Dataset and Split into Train/Validation
+dataset = load_dataset("gnyani007/data5000", split="train")
+train_test_split = dataset.train_test_split(test_size=0.1, seed=42)
+train_dataset = train_test_split["train"]
+val_dataset = train_test_split["test"]
 
-# Tokenization
+# Tokenization Function
 def tokenize_function(examples):
-    # Prepare inputs and targets
-    inputs = [f"Q: {q} A:" for q in examples['question']]
-    targets = [f"{a}" for a in examples['answer']]
-    
-    # Debug: Print the first few inputs and targets
-    # print("Inputs:", inputs[:3])  # Adjust the number to inspect more samples
-    # print("Targets:", targets[:3])
-    
-    # Tokenize inputs and targets
+    inputs = [f"Question: {q} Context: Provide a precise answer.\nAnswer:" for q in examples["question"]]
+    targets = [a for a in examples["answer"]]
     model_inputs = tokenizer(inputs, max_length=512, padding="max_length", truncation=True)
     labels = tokenizer(targets, max_length=512, padding="max_length", truncation=True)["input_ids"]
-    
-    # Debug: Print tokenized inputs and labels for the first few samples
-    # print("Tokenized Inputs:", model_inputs['input_ids'][:3])
-    # print("Tokenized Labels:", labels[:3])
-    
     model_inputs["labels"] = labels
     return model_inputs
 
-# Apply tokenization
-tokenized_dataset = dataset.map(
-    tokenize_function,
-    batched=True,
-    remove_columns=["question", "answer"]
-)
-
-# Debug: Print structure of the tokenized dataset
-# print("Tokenized Dataset Example:", tokenized_dataset[0])
+# Tokenize Datasets
+train_dataset = train_dataset.map(tokenize_function, batched=True, remove_columns=["question", "answer"])
+val_dataset = val_dataset.map(tokenize_function, batched=True, remove_columns=["question", "answer"])
 
 
 
-# Training arguments
-output_dir = "/content/drive/MyDrive/FIN"
+
+
+
+# Fine-Tuning Arguments
 training_args = TrainingArguments(
-    output_dir=output_dir,
-    per_device_train_batch_size=16,
-    gradient_accumulation_steps=16,
-    learning_rate=2e-4,
-    num_train_epochs=3,
-    save_strategy="epoch",
-    logging_steps=10,
-    save_total_limit=2,
-    gradient_checkpointing=True,
-    fp16=True,
-    optim="paged_adamw_32bit",
+    output_dir="/content/drive/MyDrive/FIN",
+    per_device_train_batch_size = 16,
+    gradient_accumulation_steps = 4,
+    per_device_eval_batch_size = 16,
+                                    # Effective batch size = 4 * 16 = 64
+    learning_rate=3e-5,
+    num_train_epochs=5,
+    evaluation_strategy="epoch",  # Evaluate after each epoch
+    save_strategy="epoch",        # Save model checkpoints per epoch
+    save_total_limit=2,           # Keep only the 2 most recent checkpoints
+    logging_dir="./logs",
+    logging_strategy="steps",
+    logging_steps=50,
+    load_best_model_at_end=True,
     report_to="none",
-    eval_strategy="no"
+    fp16=True,                    # Mixed precision for faster training
+    optim="paged_adamw_32bit",    # Optimizer for large models
 )
 
-# Trainer setup
+# Trainer Setup
 trainer = Trainer(
     model=model,
     args=training_args,
-    train_dataset=tokenized_dataset,
-    tokenizer=tokenizer
+    train_dataset=train_dataset,
+    eval_dataset=val_dataset,
+    tokenizer=tokenizer,
 )
 
-# Fine-tune the model
+# Fine-Tune the Model
 trainer.train()
-
 # Save the fine-tuned model and tokenizer
 output2_dir = ""
 model.save_pretrained(output2_dir)
 tokenizer.save_pretrained(output2_dir)
 
-repo_id = "gnyani007/testsquad"
+repo_id = "gnyani007/test23"
 
 # Push model and tokenizer
 model.push_to_hub(repo_id)

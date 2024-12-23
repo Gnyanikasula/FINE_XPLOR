@@ -15,7 +15,7 @@ from unsloth import FastLanguageModel
 token = "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"  # Replace with your Hugging Face token
 login(token)
 
-model_name = "mistralai/Mistral-7B-v0.3"
+
 
 
 # Model and Quantization Configuration

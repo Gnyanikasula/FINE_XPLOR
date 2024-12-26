@@ -15,6 +15,8 @@ import wandb
 from trl import SFTTrainer
 from transformers import TrainingArguments
 from unsloth import is_bfloat16_supported
+from datasets import load_dataset
+from datasets import DatasetDict
 
 token = "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"  # Replace with your Hugging Face token
 login(token)
@@ -51,8 +53,7 @@ model = FastLanguageModel.get_peft_model(
 )
 
 
-from datasets import load_dataset
-from datasets import DatasetDict
+
 
 # Define the Alpaca prompt
 alpaca_prompt = """You are an AI trained on financial data. Answer the following question accurately.

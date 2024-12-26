@@ -5,6 +5,7 @@ bitsandbytes==0.45.0
 accelerate == 1.2.1
 transformers==4.47.0
 unsloth==2024.12.4
+wandb == 0.19.1
 scipy 
 sentencepiece 
 protobuf

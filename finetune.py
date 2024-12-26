@@ -11,101 +11,134 @@ from transformers import (
 )
 from huggingface_hub import login
 from unsloth import FastLanguageModel
+import wandb
+from trl import SFTTrainer
+from transformers import TrainingArguments
+from unsloth import is_bfloat16_supported
 
 token = "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"  # Replace with your Hugging Face token
 login(token)
 
 
+max_seq_length = 2048
+dtype = None
+load_in_4bit = True
 
 
-# Model and Quantization Configuration
-model_name = "mistralai/Mistral-7B-v0.3"
-bnb_config = BitsAndBytesConfig(
-    load_in_8bit=True,
-    llm_int8_threshold=6.0,
-    llm_int8_skip_modules=["lm_head"],
-)
 
 model, tokenizer = FastLanguageModel.from_pretrained(
-    model_name=model_name,
-    max_seq_length=512,
-    quantization_config=bnb_config,
-    device_map="auto",
-      # Enables fast downloading
+    model_name = "unsloth/Meta-Llama-3.1-8B",
+    max_seq_length = max_seq_length,
+    dtype = dtype,
+    load_in_4bit = load_in_4bit,
+    token = "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",
 )
 
 
-# Apply LoRA Configuration
 model = FastLanguageModel.get_peft_model(
     model,
-    r=8,                        # Reduced rank for small datasets
-    target_modules=["q_proj", "v_proj"],  # Focus on key layers for adaptation
-    lora_alpha=64,              # Stronger updates
-    lora_dropout=0.2,           # Reduce overfitting
+    r = 8,
+    target_modules = ["q_proj", "k_proj", "v_proj", "o_proj",
+                      "gate_proj", "up_proj", "down_proj",],
+    lora_alpha = 32,
+    lora_dropout = 0.2,
+    bias = "lora_only",
+
+    use_gradient_checkpointing = "unsloth",
+    random_state = 3407,
+    use_rslora = True,
+    loftq_config = None,
 )
 
-# Load Dataset and Split into Train/Validation
+
+from datasets import load_dataset
+from datasets import DatasetDict
+
+# Define the Alpaca prompt
+alpaca_prompt = """You are an AI trained on financial data. Answer the following question accurately.
+
+### Question:
+{}
+
+### Response:
+{}
+
+"""
+
+EOS_TOKEN = tokenizer.eos_token  # End of sentence token
+
+# Formatting function to structure the prompts
+def formatting_prompts_func(examples):
+    questions = examples["question"]
+    answers = examples["answer"]
+    texts = []
+    for question, answer in zip(questions, answers):
+        text = alpaca_prompt.format(question, answer) + EOS_TOKEN
+        texts.append(text)
+    return {"text": texts}
+
+# Load dataset from Hugging Face Hub
 dataset = load_dataset("gnyani007/data5000", split="train")
-train_test_split = dataset.train_test_split(test_size=0.1, seed=42)
-train_dataset = train_test_split["train"]
-val_dataset = train_test_split["test"]
 
-# Tokenization Function
-def tokenize_function(examples):
-    inputs = [f"Context: Provide a precise answer for the financial related question, Question: {q} .\nAnswer:" for q in examples["question"]]
-    targets = [a for a in examples["answer"]]
-    model_inputs = tokenizer(inputs, max_length=512, padding="max_length", truncation=True)
-    labels = tokenizer(targets, max_length=512, padding="max_length", truncation=True)["input_ids"]
-    model_inputs["labels"] = labels
-    return model_inputs
+# Split the dataset into training and validation sets (e.g., 80-20 split)
+train_test_split = dataset.train_test_split(test_size=0.2, seed=42)
+split_dataset = DatasetDict({
+    "train": train_test_split["train"],
+    "validation": train_test_split["test"],
+})
 
-# Tokenize Datasets
-train_dataset = train_dataset.map(tokenize_function, batched=True, remove_columns=["question", "answer"])
-val_dataset = val_dataset.map(tokenize_function, batched=True, remove_columns=["question", "answer"])
+# Apply the formatting function to both splits
+formatted_split_dataset = split_dataset.map(formatting_prompts_func, batched=True)
+
+# # Save the formatted datasets for fine-tuning
+# formatted_split_dataset["train"].save_to_disk("formatted_train_dataset")
+# formatted_split_dataset["validation"].save_to_disk("formatted_validation_dataset")
 
 
 
 
-
-
-# Fine-Tuning Arguments
-training_args = TrainingArguments(
-    output_dir="/content/drive/MyDrive/FIN",
-    per_device_train_batch_size = 16,
-    gradient_accumulation_steps = 4,
-    per_device_eval_batch_size = 16,
-                                    # Effective batch size = 4 * 16 = 64
-    learning_rate=3e-5,
-    num_train_epochs=5,
-    evaluation_strategy="epoch",  # Evaluate after each epoch
-    save_strategy="epoch",        # Save model checkpoints per epoch
-    save_total_limit=2,           # Keep only the 2 most recent checkpoints
-    logging_dir="./logs",
-    logging_strategy="steps",
-    logging_steps=50,
-    load_best_model_at_end=True,
-    report_to="none",
-    fp16=True,                    # Mixed precision for faster training
-    optim="paged_adamw_32bit",    # Optimizer for large models
-)
-
-# Trainer Setup
-trainer = Trainer(
+# Initialize the trainer with tuned parameters
+trainer = SFTTrainer(
     model=model,
-    args=training_args,
-    train_dataset=train_dataset,
-    eval_dataset=val_dataset,
     tokenizer=tokenizer,
+    train_dataset=formatted_split_dataset["train"],
+    eval_dataset=formatted_split_dataset["validation"],
+    dataset_text_field="text",
+    max_seq_length=256,
+    dataset_num_proc=1,
+    packing=False,
+    args=TrainingArguments(
+        per_device_train_batch_size=4,
+        gradient_accumulation_steps=4,
+        warmup_steps=20,
+        max_steps=300,
+        learning_rate=3e-5,
+        fp16=True,
+        logging_steps=10,
+        optim="adamw_8bit",
+        weight_decay=0.01,
+        lr_scheduler_type="cosine",
+        seed=42,
+        output_dir="/content/drive/MyDrive/FIN",
+        logging_dir="/content/drive/MyDrive/FIN/LOG",
+        report_to=["wandb"],
+        evaluation_strategy="steps",
+        eval_steps=10,
+        save_strategy="steps",
+        save_steps=10,
+        load_best_model_at_end=True,
+    ),
 )
 
-# Fine-Tune the Model
-trainer.train()
+
+trainer_stats = trainer.train()
+
 # Save the fine-tuned model and tokenizer
 output2_dir = ""
 model.save_pretrained(output2_dir)
 tokenizer.save_pretrained(output2_dir)
 
-repo_id = "gnyani007/test23"
+repo_id = "gnyani007/test24"
 
 # Push model and tokenizer
 model.push_to_hub(repo_id)
@@ -113,5 +146,3 @@ tokenizer.push_to_hub(repo_id)
 
 
 print(f"Model successfully pushed to Hugging Face Hub at: https://huggingface.co/{repo_id}")
-
-
